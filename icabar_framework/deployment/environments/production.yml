@@ -1,0 +1,280 @@
+# ICABAR Framework - Production Environment Configuration
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: icabar-prod-config
+  namespace: icabar-production
+data:
+  # Framework Configuration
+  ENVIRONMENT: "production"
+  DEBUG: "false"
+  LOG_LEVEL: "WARN"
+  
+  # Performance Settings
+  PERFORMANCE_TARGET_MS: "47.0"
+  BENCHMARK_ITERATIONS: "1000"
+  
+  # Database Configuration
+  DATABASE_POOL_SIZE: "50"
+  DATABASE_MAX_OVERFLOW: "100"
+  DATABASE_STATEMENT_TIMEOUT: "30000"  # 30 seconds
+  
+  # Redis Configuration
+  REDIS_CACHE_TTL: "3600"  # 1 hour
+  REDIS_MAX_CONNECTIONS: "100"
+  
+  # Model Configuration
+  USER_CLUSTERS: "5"
+  ENSEMBLE_WEIGHTS: "0.4,0.3,0.3"
+  TEMPORAL_WINDOW_HOURS: "168"  # 1 week
+  MODEL_CACHE_SIZE: "1000"
+  
+  # Monitoring Configuration
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "8080"
+  HEALTH_CHECK_INTERVAL: "10"
+  
+  # Research Validation
+  ACCURACY_IMPROVEMENT_TARGET: "33.0"
+  DIVERSITY_IMPROVEMENT_TARGET: "65.0"
+  NOVELTY_IMPROVEMENT_TARGET: "45.0"
+  
+  # Security Configuration
+  JWT_EXPIRATION_HOURS: "1"
+  RATE_LIMIT_PER_MINUTE: "1000"
+  
+  # Backup Configuration
+  BACKUP_ENABLED: "true"
+  BACKUP_INTERVAL_HOURS: "4"
+  BACKUP_RETENTION_DAYS: "30"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: icabar-prod-secrets
+  namespace: icabar-production
+type: Opaque
+data:
+  DATABASE_URL: <base64-encoded-database-url>
+  REDIS_URL: <base64-encoded-redis-url>
+  SECRET_KEY: <base64-encoded-secret>
+  JWT_SECRET: <base64-encoded-jwt-secret>
+  MONITORING_TOKEN: <base64-encoded-monitoring-token>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: icabar-production
+  namespace: icabar-production
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+spec:
+  replicas: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: icabar-production
+  template:
+    metadata:
+      labels:
+        app: icabar-production
+        version: "${VERSION}"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - icabar-production
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: icabar-framework
+        image: icabar/framework:${VERSION}
+        ports:
+        - containerPort: 8000
+          name: http
+        - containerPort: 8080
+          name: metrics
+        envFrom:
+        - configMapRef:
+            name: icabar-prod-config
+        - secretRef:
+            name: icabar-prod-secrets
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-cache
+          mountPath: /app/cache
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: icabar-model-cache
+      - name: logs
+        persistentVolumeClaim:
+          claimName: icabar-logs
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: icabar-production-service
+  namespace: icabar-production
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  selector:
+    app: icabar-production
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: 8000
+    protocol: TCP
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: LoadBalancer
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: icabar-production-hpa
+  namespace: icabar-production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: icabar-production
+  minReplicas: 5
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: icabar-model-cache
+  namespace: icabar-production
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: icabar-logs
+  namespace: icabar-production
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: icabar-production-netpol
+  namespace: icabar-production
+spec:
+  podSelector:
+    matchLabels:
+      app: icabar-production
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 6379  # Redis
+    - protocol: TCP
+      port: 443   # HTTPS
+    - protocol: TCP
+      port: 53    # DNS
+    - protocol: UDP
+      port: 53    # DNS

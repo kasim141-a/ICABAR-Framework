@@ -1,0 +1,151 @@
+# ICABAR Framework - Staging Environment Configuration
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: icabar-staging-config
+  namespace: icabar-staging
+data:
+  # Framework Configuration
+  ENVIRONMENT: "staging"
+  DEBUG: "false"
+  LOG_LEVEL: "INFO"
+  
+  # Performance Settings
+  PERFORMANCE_TARGET_MS: "47.0"  # Production target
+  BENCHMARK_ITERATIONS: "1000"   # Full benchmark suite
+  
+  # Database Configuration
+  DATABASE_URL: "postgresql://icabar_staging:${DB_PASSWORD}@postgres-staging:5432/icabar_staging"
+  DATABASE_POOL_SIZE: "20"
+  DATABASE_MAX_OVERFLOW: "30"
+  
+  # Redis Configuration
+  REDIS_URL: "redis://redis-staging:6379/0"
+  REDIS_CACHE_TTL: "1800"  # 30 minutes
+  
+  # Model Configuration
+  USER_CLUSTERS: "5"
+  ENSEMBLE_WEIGHTS: "0.4,0.3,0.3"
+  TEMPORAL_WINDOW_HOURS: "168"  # 1 week
+  
+  # Monitoring Configuration
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "8080"
+  HEALTH_CHECK_INTERVAL: "15"
+  
+  # Research Validation
+  ACCURACY_IMPROVEMENT_TARGET: "33.0"
+  DIVERSITY_IMPROVEMENT_TARGET: "65.0"
+  NOVELTY_IMPROVEMENT_TARGET: "45.0"
+  
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: icabar-staging-secrets
+  namespace: icabar-staging
+type: Opaque
+data:
+  DB_PASSWORD: <base64-encoded-password>
+  SECRET_KEY: <base64-encoded-secret>
+  JWT_SECRET: <base64-encoded-jwt-secret>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: icabar-staging
+  namespace: icabar-staging
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: icabar-staging
+  template:
+    metadata:
+      labels:
+        app: icabar-staging
+    spec:
+      containers:
+      - name: icabar-framework
+        image: icabar/framework:staging-${BUILD_NUMBER}
+        ports:
+        - containerPort: 8000
+        - containerPort: 8080  # Metrics
+        envFrom:
+        - configMapRef:
+            name: icabar-staging-config
+        - secretRef:
+            name: icabar-staging-secrets
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: model-cache
+          mountPath: /app/cache
+      volumes:
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: icabar-staging-service
+  namespace: icabar-staging
+spec:
+  selector:
+    app: icabar-staging
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+  type: LoadBalancer
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: icabar-staging-hpa
+  namespace: icabar-staging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: icabar-staging
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

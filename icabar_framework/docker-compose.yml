@@ -1,0 +1,181 @@
+# ICABAR Framework Docker Compose Configuration
+# For local development and testing
+
+version: '3.8'
+
+services:
+  # ICABAR Framework Application
+  icabar-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        VERSION: ${VERSION:-dev}
+        VCS_REF: ${VCS_REF:-$(git rev-parse --short HEAD)}
+    container_name: icabar-framework
+    ports:
+      - "8000:8000"  # Application port
+      - "8080:8080"  # Metrics port
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - DATABASE_URL=postgresql://icabar:password@postgres:5432/icabar_dev
+      - REDIS_URL=redis://redis:6379/0
+      - PERFORMANCE_TARGET_MS=60.0
+      - USER_CLUSTERS=5
+      - ENSEMBLE_WEIGHTS=0.4,0.3,0.3
+    volumes:
+      - ./icabar_framework:/app/icabar_framework:ro
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - icabar-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: icabar-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=icabar_dev
+      - POSTGRES_USER=icabar
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deployment/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - icabar-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U icabar -d icabar_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: icabar-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - icabar-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: icabar-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./deployment/monitoring/prometheus-config.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - icabar-network
+    restart: unless-stopped
+    depends_on:
+      - icabar-app
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: icabar-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployment/monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deployment/monitoring/grafana-datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - icabar-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # Jupyter Notebook for Development
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.jupyter
+    container_name: icabar-jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=icabar-dev-token
+    volumes:
+      - ./notebooks:/home/jovyan/work/notebooks
+      - ./icabar_framework:/home/jovyan/work/icabar_framework:ro
+      - ./data:/home/jovyan/work/data
+    networks:
+      - icabar-network
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+
+  # Load Testing with Locust
+  locust:
+    image: locustio/locust:latest
+    container_name: icabar-locust
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./tests/load_tests:/mnt/locust
+    command: -f /mnt/locust/locustfile.py --host=http://icabar-app:8000
+    networks:
+      - icabar-network
+    depends_on:
+      - icabar-app
+
+networks:
+  icabar-network:
+    driver: bridge
+    name: icabar-network
+
+volumes:
+  postgres_data:
+    name: icabar-postgres-data
+  redis_data:
+    name: icabar-redis-data
+  prometheus_data:
+    name: icabar-prometheus-data
+  grafana_data:
+    name: icabar-grafana-data

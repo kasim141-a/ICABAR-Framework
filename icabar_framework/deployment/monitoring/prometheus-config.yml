@@ -1,0 +1,247 @@
+# Prometheus Configuration for ICABAR Framework Monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "icabar_alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # ICABAR Framework metrics
+  - job_name: 'icabar-framework'
+    static_configs:
+      - targets: ['icabar-production-service:8080']
+    metrics_path: /metrics
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+
+  # Kubernetes cluster metrics
+  - job_name: 'kubernetes-apiservers'
+    kubernetes_sd_configs:
+    - role: endpoints
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+      action: keep
+      regex: default;kubernetes;https
+
+  # Node metrics
+  - job_name: 'kubernetes-nodes'
+    kubernetes_sd_configs:
+    - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+    - action: labelmap
+      regex: __meta_kubernetes_node_label_(.+)
+
+  # Pod metrics
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+    - role: pod
+    relabel_configs:
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+      action: keep
+      regex: true
+    - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+      action: replace
+      target_label: __metrics_path__
+      regex: (.+)
+    - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+      action: replace
+      regex: ([^:]+)(?::\d+)?;(\d+)
+      replacement: $1:$2
+      target_label: __address__
+    - action: labelmap
+      regex: __meta_kubernetes_pod_label_(.+)
+    - source_labels: [__meta_kubernetes_namespace]
+      action: replace
+      target_label: kubernetes_namespace
+    - source_labels: [__meta_kubernetes_pod_name]
+      action: replace
+      target_label: kubernetes_pod_name
+
+  # Database metrics (PostgreSQL)
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+
+  # Custom ICABAR metrics
+  - job_name: 'icabar-research-metrics'
+    static_configs:
+      - targets: ['icabar-production-service:8080']
+    metrics_path: /research-metrics
+    scrape_interval: 60s
+    params:
+      format: ['json']
+
+---
+# ICABAR Framework Alert Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: icabar-alert-rules
+  namespace: monitoring
+data:
+  icabar_alerts.yml: |
+    groups:
+    - name: icabar.rules
+      rules:
+      
+      # Performance Alerts
+      - alert: ICABARHighLatency
+        expr: icabar_request_duration_seconds{quantile="0.95"} > 0.047
+        for: 2m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "ICABAR Framework high latency detected"
+          description: "95th percentile latency is {{ $value }}s, exceeding 47ms target"
+
+      - alert: ICABARCriticalLatency
+        expr: icabar_request_duration_seconds{quantile="0.95"} > 0.060
+        for: 1m
+        labels:
+          severity: critical
+          component: performance
+        annotations:
+          summary: "ICABAR Framework critical latency detected"
+          description: "95th percentile latency is {{ $value }}s, significantly exceeding target"
+
+      # Error Rate Alerts
+      - alert: ICABARHighErrorRate
+        expr: rate(icabar_http_requests_total{status=~"5.."}[5m]) / rate(icabar_http_requests_total[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: warning
+          component: reliability
+        annotations:
+          summary: "ICABAR Framework high error rate"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+
+      - alert: ICABARCriticalErrorRate
+        expr: rate(icabar_http_requests_total{status=~"5.."}[5m]) / rate(icabar_http_requests_total[5m]) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+          component: reliability
+        annotations:
+          summary: "ICABAR Framework critical error rate"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+
+      # Research Validation Alerts
+      - alert: ICABARAccuracyDegradation
+        expr: icabar_accuracy_improvement_percent < 30
+        for: 5m
+        labels:
+          severity: warning
+          component: research
+        annotations:
+          summary: "ICABAR accuracy improvement below target"
+          description: "Accuracy improvement is {{ $value }}%, below 33% target"
+
+      - alert: ICABARDiversityDegradation
+        expr: icabar_diversity_improvement_percent < 60
+        for: 5m
+        labels:
+          severity: warning
+          component: research
+        annotations:
+          summary: "ICABAR diversity improvement below target"
+          description: "Diversity improvement is {{ $value }}%, below 65% target"
+
+      - alert: ICABARNoveltyDegradation
+        expr: icabar_novelty_improvement_percent < 40
+        for: 5m
+        labels:
+          severity: warning
+          component: research
+        annotations:
+          summary: "ICABAR novelty improvement below target"
+          description: "Novelty improvement is {{ $value }}%, below 45% target"
+
+      # Resource Alerts
+      - alert: ICABARHighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{pod=~"icabar-production-.*"}[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "ICABAR Framework high CPU usage"
+          description: "CPU usage is {{ $value | humanizePercentage }} on pod {{ $labels.pod }}"
+
+      - alert: ICABARHighMemoryUsage
+        expr: container_memory_usage_bytes{pod=~"icabar-production-.*"} / container_spec_memory_limit_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "ICABAR Framework high memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} on pod {{ $labels.pod }}"
+
+      # Availability Alerts
+      - alert: ICABARServiceDown
+        expr: up{job="icabar-framework"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: "ICABAR Framework service is down"
+          description: "ICABAR Framework service has been down for more than 1 minute"
+
+      - alert: ICABARPodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total{pod=~"icabar-production-.*"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: availability
+        annotations:
+          summary: "ICABAR Framework pod crash looping"
+          description: "Pod {{ $labels.pod }} is crash looping"
+
+      # Database Alerts
+      - alert: ICABARDatabaseConnectionHigh
+        expr: pg_stat_activity_count{datname="icabar_production"} > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "ICABAR Database high connection count"
+          description: "Database connection count is {{ $value }}"
+
+      - alert: ICABARDatabaseSlowQueries
+        expr: pg_stat_statements_mean_time_ms > 1000
+        for: 2m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "ICABAR Database slow queries detected"
+          description: "Average query time is {{ $value }}ms"
