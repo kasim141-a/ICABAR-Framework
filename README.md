@@ -20,8 +20,6 @@ The study employs a mixed-methods approach, combining a systematic literature re
 ├── docs
 │   ├── ICABAR_Framework_Implementation_Guide.md
 │   └── Thesis.md
-├── presentation
-│   └── Presentation_Transcript.md
 └── src
     ├── ICABAR_Framework.py
     └── references.bib
