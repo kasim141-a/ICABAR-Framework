@@ -1,6 +1,6 @@
 # Enhancing Recommender Systems through User Behaviour Analytics and Context-Aware Suggestions
 
-This repository contains the research materials, implementation guide, and presentation for the paper "Enhancing Recommender Systems through User Behaviour Analytics and Context-Aware Suggestions: A Transformative Paradigm for Digital Commerce and User Experience."
+This repository contains the research materials,and implementation guide for the paper "Enhancing Recommender Systems through User Behaviour Analytics and Context-Aware Suggestions: A Transformative Paradigm for Digital Commerce and User Experience."
 
 ## Overview
 
