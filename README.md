@@ -1,6 +1,6 @@
 # Enhancing Recommender Systems through User Behaviour Analytics and Context-Aware Suggestions
 
-This repository contains the research materials,and implementation guide for the paper "Enhancing Recommender Systems through User Behaviour Analytics and Context-Aware Suggestions: A Transformative Paradigm for Digital Commerce and User Experience."
+This repository contains the research materials and implementation guide for the paper "Enhancing Recommender Systems through User Behaviour Analytics and Context-Aware Suggestions: A Transformative Paradigm for Digital Commerce and User Experience."
 
 ## Overview
 
@@ -38,8 +38,7 @@ To get started with this research, please refer to the following documents:
 
 *   **[Thesis.md](docs/Thesis.md)**: The full research paper, including the literature review, methodology, and findings.
 *   **[ICABAR_Framework_Implementation_Guide.md](docs/ICABAR_Framework_Implementation_Guide.md)**: A practical guide to implementing the ICABAR framework.
-*   **[Presentation_Transcript.md](presentation/Presentation_Transcript.md)**: A transcript of the presentation, providing a high-level overview of the research.
-
+  
 ## Citation
 
 If you use this research in your work, please cite it as follows:
